@@ -1,6 +1,6 @@
 extern crate proc_macro;
 
-use fancy_regex::Regex;
+use regex::Regex;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
@@ -93,12 +93,12 @@ fn validate_path(path: &Path, span: Span) -> syn::Result<()> {
 }
 
 fn check_name(regex: &Regex, name: &str, span: Span) -> syn::Result<()> {
-    if regex.is_match(name).unwrap() {
+    if regex.is_match(name) {
         Err(Error::new(
             span,
             &format!(
                 "invalid character sequence: {}",
-                regex.find(name).unwrap().unwrap().as_str()
+                regex.find(name).unwrap().as_str()
             ),
         ))
     } else {
