@@ -14,15 +14,15 @@ pub fn try_valid<P: AsRef<Path>>(path: P) -> Result<(), String> {
     let path = path.as_ref();
 
     if path.is_absolute() {
-        try_absolute(&invalid_sequences, path)
+        try_absolute(path)
     } else {
         let abs_current_dir = std::env::current_dir().expect("cuurent dir should be valid");
         let abs_path = abs_current_dir.join(path);
-        try_absolute(&invalid_sequences, &abs_path)
+        try_absolute(&abs_path)
     }
 }
 
-fn try_absolute(regex: &Regex, path: &Path) -> Result<(), String> {
+fn try_absolute(path: &Path) -> Result<(), String> {
     let mut components = path.components();
     match components.next() {
         None => return Err("empty path".to_owned()),
@@ -31,24 +31,20 @@ fn try_absolute(regex: &Regex, path: &Path) -> Result<(), String> {
                 if let Some(comp) = components.next() {
                     match comp {
                         Component::RootDir => {
-                            return try_absolute_components(regex, components, path);
+                            return try_absolute_components(components, path);
                         }
                         _ => (),
                     }
                 }
             }
             Component::RootDir => {
-                return try_absolute_components(regex, components, path);
+                return try_absolute_components(components, path);
             }
             _ => (),
         },
     }
 
-    fn try_absolute_components(
-        regex: &Regex,
-        components: Components,
-        path: &Path,
-    ) -> Result<(), String> {
+    fn try_absolute_components(components: Components, path: &Path) -> Result<(), String> {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum Move {
             Descend,
@@ -59,7 +55,7 @@ fn try_absolute(regex: &Regex, path: &Path) -> Result<(), String> {
         for component in components {
             match component {
                 Component::Normal(name) => {
-                    check_name(regex, name.to_str().expect("path should be valid UTF-8"))?;
+                    check_name(name.to_str().expect("path should be valid UTF-8"))?;
                     move_history.push(Move::Descend);
                 }
                 Component::ParentDir => move_history.push(Move::Ascend),
@@ -86,13 +82,30 @@ fn try_absolute(regex: &Regex, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn check_name(regex: &Regex, name: &str) -> Result<(), String> {
-    if regex.is_match(name) {
+fn check_name(name: &str) -> Result<(), String> {
+    let invalid_sequences =
+        Regex::new(r#"[<>:"/\\|?*\x00-\x1F]|^(?i:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..+)?$"#)
+            .unwrap();
+    if invalid_sequences.is_match(name) {
         Err(format!(
             "invalid character sequence: {}",
-            regex.find(name).unwrap().as_str()
+            invalid_sequences.find(name).unwrap().as_str()
         ))
     } else {
-        Ok(())
+        let invalid_trailing = Regex::new(r".*[. ]$").unwrap();
+        if invalid_trailing.is_match(name) {
+            Err(format!(
+                "invalid character in trailing position: '{}'",
+                invalid_trailing
+                    .find(name)
+                    .unwrap()
+                    .as_str()
+                    .chars()
+                    .last()
+                    .expect("should be non-empty")
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
