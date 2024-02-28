@@ -8,3 +8,4 @@ edition = "2021"
 
 [dependencies]
 fs-scout-macros = { path = "fs-scout-macros" }
+regex = "1.10.3"
