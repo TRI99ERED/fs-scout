@@ -4,8 +4,12 @@ name = "fs-scout"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["win"]
+win = ["dep:regex", "fs-scout-macros/win"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fs-scout-macros = { path = "fs-scout-macros" }
-regex = "1.10.3"
+fs-scout-macros = { path = "fs-scout-macros", default-features = false }
+regex = { version = "1.10.3", optional = true }
