@@ -5,283 +5,74 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use std::path::{Component, Components, Path};
+use std::{
+    marker::PhantomData,
+    path::{Component, Components, Path},
+};
 use syn::{parse::Parse, parse_macro_input, Error, LitStr};
 
-#[proc_macro]
-pub fn exists(input: TokenStream) -> TokenStream {
-    let ExistsData(s) = parse_macro_input!(input as ExistsData);
-    quote! {
-        #s
-    }
-    .into()
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Move {
+    Descend,
+    Ascend,
 }
 
-struct ExistsData(String);
+trait Matcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()>;
 
-impl Parse for ExistsData {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let lookahead = input.lookahead1();
-        if lookahead.peek(LitStr) {
-            let lit = input.parse::<LitStr>()?;
-            let path_string = lit.value();
-            let path = Path::new(&path_string);
-
-            if let Ok(true) = path.try_exists() {
-            } else {
-                return Err(Error::new(lit.span(), "path doesn't exist"));
-            }
-
-            Ok(ExistsData(path_string))
-        } else {
-            Err(Error::new(
-                input.span(),
-                "invalid input, expected string literal",
-            ))
-        }
-    }
-}
-
-#[proc_macro]
-pub fn valid_file(input: TokenStream) -> TokenStream {
-    let ValidFileData(s) = parse_macro_input!(input as ValidFileData);
-    quote! {
-        #s
-    }
-    .into()
-}
-
-struct ValidFileData(String);
-
-impl Parse for ValidFileData {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let lookahead = input.lookahead1();
-        if lookahead.peek(LitStr) {
-            let lit = input.parse::<LitStr>()?;
-            let path_string = lit.value();
-            let path = Path::new(&path_string);
-            let span = lit.span();
-
-            validate_file_path(path, span)?;
-
-            Ok(ValidFileData(path_string))
-        } else {
-            Err(Error::new(
-                input.span(),
-                "invalid input, expected string literal",
-            ))
-        }
-    }
-}
-
-fn validate_file_path<P: AsRef<Path> + Copy>(path: P, span: Span) -> syn::Result<()> {
-    let path = path.as_ref();
-
-    if let None = path.extension() {
-        return Err(Error::new(span, "this path belongs to a directory"));
-    }
-
-    if path.is_absolute() {
-        try_absolute_file(path, span)
-    } else {
-        let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
-        let abs_path = abs_current_dir.join(path);
-        try_absolute_file(&abs_path, span)
-    }
-}
-
-fn try_absolute_file(path: &Path, span: Span) -> syn::Result<()> {
-    match path.parent() {
-        Some(parent) => {
-            if let Ok(true) = parent.try_exists() {
-            } else {
-                return Err(Error::new(
+    fn try_parent_exists(path: &Path, span: Span) -> syn::Result<()> {
+        match path.parent() {
+            None => Ok(()),
+            Some(parent) => match parent.try_exists() {
+                Ok(true) => Ok(()),
+                _ => Err(Error::new(
                     span,
-                    format!("parent path {} doesn't exist", parent.display()),
-                ));
-            }
-        }
-        None => return Ok(()),
-    }
-
-    match path.components().last() {
-        Some(last) => match last {
-            Component::Normal(name) => {
-                #[cfg(feature = "win")]
-                {
-                    return check_name(name.to_str().expect("path should be valid UTF-8"), span);
-                }
-                #[allow(unreachable_code)]
-                Ok(())
-            }
-            _ => Err(Error::new(span, "wrong component type")),
-        },
-        None => Err(Error::new(span, "empty path")),
-    }
-}
-
-#[proc_macro]
-pub fn valid_dir(input: TokenStream) -> TokenStream {
-    let ValidDirData(s) = parse_macro_input!(input as ValidDirData);
-    quote! {
-        #s
-    }
-    .into()
-}
-
-struct ValidDirData(String);
-
-impl Parse for ValidDirData {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let lookahead = input.lookahead1();
-        if lookahead.peek(LitStr) {
-            let lit = input.parse::<LitStr>()?;
-            let path_string = lit.value();
-            let path = Path::new(&path_string);
-            let span = lit.span();
-
-            validate_dir_path(path, span)?;
-
-            Ok(ValidDirData(path_string))
-        } else {
-            Err(Error::new(
-                input.span(),
-                "invalid input, expected string literal",
-            ))
+                    format!("parent path \"{}\" doesn't exist", parent.display()),
+                )),
+            },
         }
     }
-}
 
-fn validate_dir_path<P: AsRef<Path> + Copy>(path: P, span: Span) -> syn::Result<()> {
-    let path = path.as_ref();
-
-    if let Some(_) = path.extension() {
-        return Err(Error::new(span, "this path belongs to a file"));
-    }
-
-    if path.is_absolute() {
-        try_absolute_dir(path, span)
-    } else {
-        let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
-        let abs_path = abs_current_dir.join(path);
-        try_absolute_dir(&abs_path, span)
-    }
-}
-
-fn try_absolute_dir(path: &Path, span: Span) -> syn::Result<()> {
-    match path.parent() {
-        Some(parent) => {
-            if let Ok(true) = parent.try_exists() {
-            } else {
-                return Err(Error::new(
-                    span,
-                    format!("parent path {} doesn't exist", parent.display()),
-                ));
-            }
-        }
-        None => return Ok(()),
-    }
-
-    match path.components().last() {
-        Some(last) => match last {
-            Component::Normal(name) => {
-                #[cfg(feature = "win")]
-                {
-                    return check_name(name.to_str().expect("path should be valid UTF-8"), span);
-                }
-                #[allow(unreachable_code)]
-                Ok(())
-            }
-            _ => Err(Error::new(span, "wrong component type")),
-        },
-        None => Err(Error::new(span, "empty path")),
-    }
-}
-
-#[proc_macro]
-pub fn valid_dir_all(input: TokenStream) -> TokenStream {
-    let ValidDirAllData(s) = parse_macro_input!(input as ValidDirAllData);
-    quote! {
-        #s
-    }
-    .into()
-}
-
-struct ValidDirAllData(String);
-
-impl Parse for ValidDirAllData {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let lookahead = input.lookahead1();
-        if lookahead.peek(LitStr) {
-            let lit = input.parse::<LitStr>()?;
-            let path_string = lit.value();
-            let path = Path::new(&path_string);
-            let span = lit.span();
-
-            validate_dir_all_path(path, span)?;
-
-            Ok(ValidDirAllData(path_string))
-        } else {
-            Err(Error::new(
-                input.span(),
-                "invalid input, expected string literal",
-            ))
-        }
-    }
-}
-
-fn validate_dir_all_path<P: AsRef<Path> + Copy>(path: P, span: Span) -> syn::Result<()> {
-    let path = path.as_ref();
-
-    if let Some(_) = path.extension() {
-        return Err(Error::new(span, "this path belongs to a file"));
-    }
-
-    if path.is_absolute() {
-        try_absolute_dir_all(path, span)
-    } else {
-        let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
-        let abs_path = abs_current_dir.join(path);
-        try_absolute_dir_all(&abs_path, span)
-    }
-}
-
-fn try_absolute_dir_all(path: &Path, span: Span) -> syn::Result<()> {
-    let mut components = path.components();
-    match components.next() {
-        None => return Err(Error::new(span, "empty path")),
-        Some(comp) => match comp {
-            Component::Prefix(_) => {
-                if let Some(comp) = components.next() {
-                    match comp {
-                        Component::RootDir => {
-                            return try_absolute_components(components, path, span);
-                        }
-                        _ => (),
+    fn try_absolute(path: &Path, span: Span) -> syn::Result<()> {
+        match path.components().last() {
+            None => return Err(Error::new(span, "empty path")),
+            Some(last) => match last {
+                Component::Normal(name) => {
+                    #[cfg(feature = "win")]
+                    {
+                        check_name(name.to_str().expect("path should be valid UTF-8"), span)?;
                     }
                 }
-            }
-            Component::RootDir => {
-                return try_absolute_components(components, path, span);
-            }
-            _ => (),
-        },
+                _ => return Err(Error::new(span, "wrong component type")),
+            },
+        }
+
+        let mut components = path.components();
+
+        match components.next() {
+            None => Err(Error::new(span, "empty path")),
+            Some(comp) => match comp {
+                Component::Prefix(_) => match components.next() {
+                    None => Self::try_absolute_components(components, path, span),
+                    Some(comp) => match comp {
+                        Component::RootDir => Self::try_absolute_components(components, path, span),
+                        _ => Err(Error::new(span, "wrong component type")),
+                    },
+                },
+                Component::RootDir => Self::try_absolute_components(components, path, span),
+                _ => Err(Error::new(span, "wrong component type")),
+            },
+        }
     }
 
     fn try_absolute_components(components: Components, path: &Path, span: Span) -> syn::Result<()> {
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Move {
-            Descend,
-            Ascend,
-        }
-
         let mut move_history = vec![];
         for component in components {
             match component {
-                Component::Normal(_name) => {
+                Component::Normal(name) => {
                     #[cfg(feature = "win")]
                     {
-                        check_name(_name.to_str().expect("path should be valid UTF-8"), span)?;
+                        check_name(name.to_str().expect("path should be valid UTF-8"), span)?;
                     }
                     move_history.push(Move::Descend);
                 }
@@ -289,12 +80,16 @@ fn try_absolute_dir_all(path: &Path, span: Span) -> syn::Result<()> {
                 _ => (),
             }
         }
+
         if let Some(i) = move_history.iter().rev().position(|&m| m == Move::Ascend) {
-            let n = move_history.len() - i;
-            let depth = move_history.iter().take(n).fold(0, |acc, &m| match m {
-                Move::Descend => acc + 1,
-                Move::Ascend => acc - 1,
-            });
+            let last_is_parent_dir = move_history.len() - i;
+            let depth = move_history
+                .iter()
+                .take(last_is_parent_dir)
+                .fold(0, |acc, &m| match m {
+                    Move::Descend => acc + 1,
+                    Move::Ascend => acc - 1,
+                });
 
             if depth < 0 {
                 return Err(Error::new(
@@ -308,8 +103,216 @@ fn try_absolute_dir_all(path: &Path, span: Span) -> syn::Result<()> {
         }
         Ok(())
     }
+}
 
-    Ok(())
+struct ScoutData<M: Matcher + ?Sized>(String, PhantomData<M>);
+
+impl<M: Matcher> Parse for ScoutData<M> {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let lookahead = input.lookahead1();
+        if lookahead.peek(LitStr) {
+            let lit = input.parse::<LitStr>()?;
+            let path_string = lit.value();
+            let path = Path::new(&path_string);
+            let span = lit.span();
+
+            M::try_match(path, span)?;
+
+            Ok(Self(path_string, PhantomData))
+        } else {
+            Err(Error::new(
+                input.span(),
+                format!(
+                    "invalid input, expected string literal; input: {}",
+                    input.to_string()
+                ),
+            ))
+        }
+    }
+}
+
+struct ExistsMatcher;
+
+impl Matcher for ExistsMatcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
+        if let Ok(true) = path.try_exists() {
+            Ok(())
+        } else {
+            Err(Error::new(span, "path doesn't exist"))
+        }
+    }
+}
+
+#[proc_macro]
+pub fn exists(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ExistsMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+struct NotExistMatcher;
+
+impl Matcher for NotExistMatcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
+        if let Ok(true) = path.try_exists() {
+            Err(Error::new(span, "path already exists"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[proc_macro]
+pub fn not_exists(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<NotExistMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+struct ValidFileMatcher;
+
+impl Matcher for ValidFileMatcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
+        if let None = path.extension() {
+            return Err(Error::new(span, "this path belongs to a directory"));
+        }
+
+        if path.is_absolute() {
+            let root = Path::new("/");
+            root.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        root.display()
+                    ),
+                )
+            })?;
+            Self::try_parent_exists(path, span)?;
+            Self::try_absolute(path, span)
+        } else {
+            let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
+            abs_current_dir.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        abs_current_dir.display()
+                    ),
+                )
+            })?;
+            let abs_path = abs_current_dir.join(path);
+            Self::try_parent_exists(&abs_path, span)?;
+            Self::try_absolute(&abs_path, span)
+        }
+    }
+}
+
+#[proc_macro]
+pub fn valid_file(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidFileMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+struct ValidDirMatcher;
+
+impl Matcher for ValidDirMatcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
+        if let Some(_) = path.extension() {
+            return Err(Error::new(span, "this path belongs to a file"));
+        }
+
+        if path.is_absolute() {
+            let root = Path::new("/");
+            root.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        root.display()
+                    ),
+                )
+            })?;
+            Self::try_parent_exists(path, span)?;
+            Self::try_absolute(path, span)
+        } else {
+            let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
+            abs_current_dir.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        abs_current_dir.display()
+                    ),
+                )
+            })?;
+            let abs_path = abs_current_dir.join(path);
+            Self::try_parent_exists(&abs_path, span)?;
+            Self::try_absolute(&abs_path, span)
+        }
+    }
+}
+
+#[proc_macro]
+pub fn valid_dir(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+struct ValidDirAllMatcher;
+
+impl Matcher for ValidDirAllMatcher {
+    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
+        if let Some(_) = path.extension() {
+            return Err(Error::new(span, "this path belongs to a file"));
+        }
+
+        if path.is_absolute() {
+            let root = Path::new("/");
+            root.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        root.display()
+                    ),
+                )
+            })?;
+            Self::try_absolute(path, span)
+        } else {
+            let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
+            abs_current_dir.metadata().map_err(|_| {
+                Error::new(
+                    span,
+                    format!(
+                        "lacks permission to access parent at \"{}\"",
+                        abs_current_dir.display()
+                    ),
+                )
+            })?;
+            let abs_path = abs_current_dir.join(path);
+            Self::try_absolute(&abs_path, span)
+        }
+    }
+}
+
+#[proc_macro]
+pub fn valid_dir_all(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirAllMatcher>);
+    quote! {
+        #s
+    }
+    .into()
 }
 
 #[cfg(feature = "win")]
