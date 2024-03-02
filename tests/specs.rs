@@ -47,8 +47,6 @@ fn example() {
     let here_file = valid_file!("file.bin");
 
     let created_file = create_file!("file.bin"!);
-    let created_new_file = create_new_file!("new_file.bin"!);
-    // let invalid_new_file = create_new!("Cargo.toml"!);
     let opened_file = open_file!("Cargo.toml"!);
     // let invalid_opened_file = open!("file.bin"!);
     let read_file = read_file!("Cargo.toml"!);

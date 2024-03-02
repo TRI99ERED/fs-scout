@@ -1,4 +1,14 @@
-//! This crate is an experiment! It can't guarantee correctness in all usecases.
+//! A simple crate exporting macros meant to help check the paths at compiletime.
+//!
+//! This crate is an `experiment`! It can't guarantee correctness in all usecases.
+//! Contents are reexported in [`fs_scout`](https://docs.rs/fs_scout/) crate with some added declarative macros.
+//!
+//! # Features
+//! The feature flag `"win"` enables checks for allowed names in Windows. The reason, this is not tied to
+//! your OS is to support crossplatform development (e.g., knowing, that your program will not create any
+//! files or directories forbidden by Windows). It is included in default feature for that very reason.
+//! If you don't plan to deploy to Windows and need to bypass this restriction, you can use flag
+//! `default-features = false` to disable this behaviour.
 
 extern crate proc_macro;
 
@@ -10,6 +20,131 @@ use std::{
     path::{Component, Components, Path},
 };
 use syn::{parse::Parse, parse_macro_input, Error, LitStr};
+
+/// Checks if a path exists during compiletime.
+/// Useful, if your program requires the path to always exist.
+/// For files doesn't care about permissions.
+///
+/// # Examples
+/// ```rust, ignore
+/// # use std::error::Error;
+/// #
+/// # fn main() -> Result<(), Box<dyn Error>> {
+/// # use fs_scout_macros::exists;
+/// #
+/// const HAS_TO_EXIST: &str = exists!("/yes/");
+///
+/// let file = std::fs::File::open(HAS_TO_EXIST).expect("should exist");
+/// #   Ok(())
+/// # }
+/// ```
+#[proc_macro]
+pub fn exists(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ExistsMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+/// Checks a path for being a valid file at compiletime.
+///
+/// This does exactly the following list of things:
+/// * checks, if the path is a file path (contains an extension).
+/// * checks, if the path parent tree exists. The file is considered "invalid",
+/// if any parent directory doesn't exist.
+/// * checks if the path doesn't lead outside the root (e.g. "/../file.bin").
+/// Even though such path might be handled correctly by some functions, it might break the others.
+/// * if file exists, checks if it's not readonly.
+/// For opening or reading a file, you need to ensure it's existence with [`exists`] instead.
+/// * if feature `"win"` is enabled, checks the whole path for Windows filesystem compatibility.
+///
+/// Note, that file doesn't need to exist for this to pass.
+/// # Examples
+/// ```rust, no_run
+/// # use std::error::Error;
+/// #
+/// # fn main() -> Result<(), Box<dyn Error>> {
+/// # use fs_scout_macros::valid_file;
+/// #
+/// const IS_VALID: &str = valid_file!("/yes_file.txt");
+///
+/// let file = std::fs::File::create(IS_VALID).expect("should be valid");
+/// #   Ok(())
+/// # }
+/// ```
+#[proc_macro]
+pub fn valid_file(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidFileMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+/// Checks a path for being a valid file at compiletime.
+///
+/// This does exactly the following list of things:
+/// * checks, if the path is a directory path (contains no extension).
+/// * checks, if the path parent tree exists. The directory is considered "invalid",
+/// if any parent directory doesn't exist.
+/// * checks if the path doesn't lead outside the root (e.g. "/../dir").
+/// Even though such path might be handled correctly by some functions, it might break the others.
+/// * if feature `"win"` is enabled, checks the whole path for Windows filesystem compatibility.
+///
+/// Note, that final directory doesn't need to exist for this to pass.
+/// # Examples
+/// ```rust, no_run
+/// # use std::error::Error;
+/// #
+/// # fn main() -> Result<(), Box<dyn Error>> {
+/// # use fs_scout_macros::valid_dir;
+/// #
+/// const IS_VALID: &str = valid_dir!("/yes_dir");
+///
+/// let file = std::fs::create_dir_all(IS_VALID).expect("should be valid"); // .create_dir() would panic, if directory exists
+/// #   Ok(())
+/// # }
+/// ```
+#[proc_macro]
+pub fn valid_dir(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
+
+/// Checks the whole path for being a valid path tree.
+///
+/// This does exactly the following list of things:
+/// * checks, if the path is a directory path (contains no extension).
+/// * checks if the path doesn't lead outside the root (e.g. "/../dir").
+/// Even though such path might be handled correctly by some functions, it might break the others.
+/// * if feature `"win"` is enabled, checks the whole path for Windows filesystem compatibility.
+///
+/// Note, that no directory in this path needs to exist, for this to pass.
+/// # Examples
+/// ```rust, no_run
+/// # use std::error::Error;
+/// #
+/// # fn main() -> Result<(), Box<dyn Error>> {
+/// # use fs_scout_macros::valid_dir_all;
+/// #
+/// const IS_VALID: &str = valid_dir_all!("/yes_1/yes_2/yes_3");
+///
+/// let file = std::fs::create_dir_all(IS_VALID).expect("should be valid");
+/// #   Ok(())
+/// # }
+/// ```
+#[proc_macro]
+pub fn valid_dir_all(input: TokenStream) -> TokenStream {
+    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirAllMatcher>);
+    quote! {
+        #s
+    }
+    .into()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Move {
@@ -142,56 +277,27 @@ impl Matcher for ExistsMatcher {
         }
     }
 }
-
-#[proc_macro]
-pub fn exists(input: TokenStream) -> TokenStream {
-    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ExistsMatcher>);
-    quote! {
-        #s
-    }
-    .into()
-}
-
-struct NotExistMatcher;
-
-impl Matcher for NotExistMatcher {
-    fn try_match(path: &Path, span: Span) -> syn::Result<()> {
-        if let Ok(true) = path.try_exists() {
-            Err(Error::new(span, "path already exists"))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-#[proc_macro]
-pub fn not_exists(input: TokenStream) -> TokenStream {
-    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<NotExistMatcher>);
-    quote! {
-        #s
-    }
-    .into()
-}
-
 struct ValidFileMatcher;
 
 impl Matcher for ValidFileMatcher {
     fn try_match(path: &Path, span: Span) -> syn::Result<()> {
-        if let None = path.extension() {
-            return Err(Error::new(span, "this path belongs to a directory"));
+        match path.extension() {
+            None => return Err(Error::new(span, "this path belongs to a directory")),
+            Some(_) => {
+                if let Ok(true) = path.try_exists() {
+                    if path
+                        .metadata()
+                        .expect("should have metadata permissions")
+                        .permissions()
+                        .readonly()
+                    {
+                        return Err(Error::new(span, "file is readonly"));
+                    }
+                }
+            }
         }
 
         if path.is_absolute() {
-            let root = Path::new("/");
-            root.metadata().map_err(|_| {
-                Error::new(
-                    span,
-                    format!(
-                        "lacks permission to access parent at \"{}\"",
-                        root.display()
-                    ),
-                )
-            })?;
             Self::try_parent_exists(path, span)?;
             Self::try_absolute(path, span)
         } else {
@@ -210,15 +316,6 @@ impl Matcher for ValidFileMatcher {
             Self::try_absolute(&abs_path, span)
         }
     }
-}
-
-#[proc_macro]
-pub fn valid_file(input: TokenStream) -> TokenStream {
-    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidFileMatcher>);
-    quote! {
-        #s
-    }
-    .into()
 }
 
 struct ValidDirMatcher;
@@ -230,16 +327,6 @@ impl Matcher for ValidDirMatcher {
         }
 
         if path.is_absolute() {
-            let root = Path::new("/");
-            root.metadata().map_err(|_| {
-                Error::new(
-                    span,
-                    format!(
-                        "lacks permission to access parent at \"{}\"",
-                        root.display()
-                    ),
-                )
-            })?;
             Self::try_parent_exists(path, span)?;
             Self::try_absolute(path, span)
         } else {
@@ -260,15 +347,6 @@ impl Matcher for ValidDirMatcher {
     }
 }
 
-#[proc_macro]
-pub fn valid_dir(input: TokenStream) -> TokenStream {
-    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirMatcher>);
-    quote! {
-        #s
-    }
-    .into()
-}
-
 struct ValidDirAllMatcher;
 
 impl Matcher for ValidDirAllMatcher {
@@ -278,16 +356,6 @@ impl Matcher for ValidDirAllMatcher {
         }
 
         if path.is_absolute() {
-            let root = Path::new("/");
-            root.metadata().map_err(|_| {
-                Error::new(
-                    span,
-                    format!(
-                        "lacks permission to access parent at \"{}\"",
-                        root.display()
-                    ),
-                )
-            })?;
             Self::try_absolute(path, span)
         } else {
             let abs_current_dir = std::env::current_dir().expect("current dir should be valid");
@@ -304,15 +372,6 @@ impl Matcher for ValidDirAllMatcher {
             Self::try_absolute(&abs_path, span)
         }
     }
-}
-
-#[proc_macro]
-pub fn valid_dir_all(input: TokenStream) -> TokenStream {
-    let ScoutData(s, ..) = parse_macro_input!(input as ScoutData<ValidDirAllMatcher>);
-    quote! {
-        #s
-    }
-    .into()
 }
 
 #[cfg(feature = "win")]
